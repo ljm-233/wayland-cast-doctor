@@ -101,7 +101,7 @@ Hyprland 只装了 wlr 后端时，共享**仍然成功**，只是选择框里�
 ## 安装
 
 ```
-sudo pacman -U wayland-cast-doctor-2026.10.3-1-any.pkg.tar.zst
+sudo pacman -U wayland-cast-doctor-2026.10.3-2-any.pkg.tar.zst
 ```
 
 或者从源码：
