@@ -93,8 +93,10 @@ Hyprland 只装了 wlr 后端时，共享**仍然成功**，只是选择框里�
   各自的独有机制做专门检查**。
 - 合成器类型的识别靠 `XDG_CURRENT_DESKTOP` 子串匹配。这个值各家不统一，
   KDE 会报 `KDE` 或 `Plasma`，Ubuntu 上 GNOME 是 `ubuntu:GNOME`。
-- QQ 注入检测读 `/proc/PID/maps`，只对本地安装的 `linuxqq-wayland-fix`
-  有效；Flatpak 版路径不同，可能识别不到。
+- QQ 注入检测逐进程读 `/proc/PID/maps`、`/proc/PID/environ` 和 `cmdline`，覆盖**所有**
+  `qq` 进程（重点看收帧的 `--type=ppapi`），并单独报告 `libqq-wl-portal/clipbridge/
+  screenshot/borderfix` 四个库各缺哪个、以及是不是从修复版启动器起来的。只对本地安装的
+  `linuxqq-wayland-fix` 有效；Flatpak 版路径不同，可能识别不到。
 
 **如果你在别的桌面上发现它漏了什么，或者报错了，来提issue。**
 
