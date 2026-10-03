@@ -106,10 +106,50 @@ case "$COMPOSITOR" in
 		fi
 		;;
 	*[Hh]yprland*|*sway*)
-		ok "wlroots 系合成器，ScreenCast 由 wlr-portal 实现"
+		ok "wlroots 系合成器，采集由 wlr 或 hyprland 后端提供（见下）"
 		;;
 	*GNOME*|*gnome*)
 		ok "mutter 自己实现 ScreenCast，能力宣告完整"
+		;;
+esac
+
+# wlroots compositors have one problem no other family has: the portal backend
+# is a separate project rather than part of the compositor, and there are two
+# of them that are not interchangeable.
+#
+#   xdg-desktop-portal-wlr       whole-screen only
+#   xdg-desktop-portal-hyprland  fork of the above, adds window selection
+#
+# Hyprland ships its own fork because the window picker in the wlr one is too
+# limited. Sway and the rest only ever get the wlr backend, so asking them for
+# a single window is a dead end -- the portal never offers it, and no
+# client-side fixing changes that.
+case "$COMPOSITOR" in
+	*[Hh]yprland*)
+		if busctl --user list 2>/dev/null | grep -q 'portal\.desktop\.hyprland'; then
+			ok "装了 xdg-desktop-portal-hyprland（支持选单个窗口）"
+		elif busctl --user list 2>/dev/null | grep -q 'portal\.desktop\.wlr'; then
+			bad "只装了 xdg-desktop-portal-wlr，共享时选不了单个窗口"
+			printf '       Hyprland 有自己的 portal 后端，是 wlr 的 fork，多了窗口级\n'
+			printf '       采集。wlr 那个只能共享整个输出。缺了不报错，只是选择框\n'
+			printf '       里没有窗口条目。\n'
+			printf '       装：sudo pacman -S xdg-desktop-portal-hyprland\n'
+		else
+			bad "没有 Hyprland 用的 portal 后端"
+			printf '       装：sudo pacman -S xdg-desktop-portal-hyprland\n'
+		fi
+		;;
+	*sway*|*river*|*labwc*|*[Ww]ayfire*)
+		# No fork exists for these, so only warn when a backend is missing
+		# entirely. Do not suggest the hyprland backend here: it hard-depends
+		# on Hyprland and will not run on these compositors.
+		if busctl --user list 2>/dev/null | grep -qE 'portal\.desktop\.(wlr|hyprland)'; then
+			info "wlroots 系只能共享整个屏幕（没有窗口级采集后端）"
+			printf '       这是 Sway / river 这类合成器的固有限制，不是配置问题。\n'
+		else
+			bad "既没有 wlr 后端也没有 hyprland 后端"
+			printf '       装：sudo pacman -S xdg-desktop-portal-wlr\n'
+		fi
 		;;
 esac
 
