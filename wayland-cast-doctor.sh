@@ -17,10 +17,18 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 BLOCK=0
 
-ok()   { printf '  正常  %s\n' "$1"; }
-info() { printf '  提示  %s\n' "$1"; }
-warn() { printf '  注意  %s\n' "$1"; }
-bad()  { printf '  故障  %s\n' "$1"; BLOCK=1; }
+# 只在终端上色；管道/重定向时保持纯文本
+if [ -t 1 ]; then
+	R=$(printf '\033[31m'); G=$(printf '\033[32m')
+	Y=$(printf '\033[33m'); B=$(printf '\033[0m')
+else
+	R=""; G=""; Y=""; B=""
+fi
+
+ok()   { printf '  %s正常%s  %s\n' "$G" "$B" "$1"; }
+info() { printf '  %s提示%s  %s\n' "$B" "$B" "$1"; }
+warn() { printf '  %s注意%s  %s\n' "$Y" "$B" "$1"; }
+bad()  { printf '  %s故障%s  %s\n' "$R" "$B" "$1"; BLOCK=1; }
 
 head_() { printf '\n%s\n' "$1"; }
 
