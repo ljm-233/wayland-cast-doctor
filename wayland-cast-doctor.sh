@@ -81,7 +81,7 @@ else
 		ok "提供 ScreenCast 的后端：$CAST_OK"
 	else
 		bad "没有任何后端提供 ScreenCast 接口"
-		printf '       gtk 后端不实现屏幕采集。如果首选里default 被设成 gtk，\n'
+		printf '       gtk 后端不实现屏幕采集。如果首选里的 default 被设成 gtk，\n'
 		printf '       共享一定失败。改 /usr/share/xdg-desktop-portal/portals.conf。\n'
 	fi
 fi
@@ -236,6 +236,9 @@ if [ -r /proc/meminfo ]; then
 			printf '       共享时超过 4 GiB 通常意味着帧生产快过消费：niri 宣告\n'
 			printf '       VideoFramerate 0/1 会被理解成不限速，软件编码器来不及\n'
 			printf '       消费，裸帧堆在共享内存里。niri 用户加 screencasting 块限帧率。\n'
+			printf '       注意帧率只在 niri 启动时读一次，改完 config.kdl 必须重启\n'
+			printf '       niri；`niri msg action load-config-file` 改不动它。真实的\n'
+			printf '       协商值看 journal 里的 framerate: spa_fraction，不看配置文件。\n'
 		else
 			ok "Shmem ${shmem} GiB"
 		fi
