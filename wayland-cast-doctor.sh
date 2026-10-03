@@ -32,6 +32,53 @@ bad()  { printf '  %s故障%s  %s\n' "$R" "$B" "$1"; BLOCK=1; }
 
 head_() { printf '\n%s\n' "$1"; }
 
+# ---- 下面几项检查共用的读取助手 -------------------------------------------
+
+# /proc/meminfo 的 Shmem（普通共享内存 + GPU 侧 system 记账的总和），单位 KiB
+shmem_kib() { awk '/^Shmem:/{print $2+0; exit}' /proc/meminfo 2>/dev/null; }
+
+# 一个进程的共享内存占用，单位 KiB。
+# 注意：smaps_rollup 里没有裸的 "Shmem:" 字段，共享部分是 Pss_Shmem。
+pss_shmem() {  # $1=pid
+	v=$(awk '/^Pss_Shmem:/{print $2+0; exit}' "/proc/$1/smaps_rollup" 2>/dev/null)
+	printf '%s' "${v:-0}"
+}
+
+# 一个进程的 DRM/i915 "system" 对象总量，单位 KiB。
+# 同一个 DRM client 会通过多个复制出来的 fd 重复出现（drm-client-id 相同），
+# 必须按 client 去重，否则同一块内存会被算好几遍。
+drm_sys_kib() {  # $1=pid
+	for f in /proc/$1/fdinfo/*; do
+		[ -r "$f" ] || continue
+		awk '/^drm-client-id:/{id=$2}
+		     /^drm-total-system/{if (id != "") print id, $2+0}' "$f" 2>/dev/null
+	done | awk '{ if ($2 > m[$1]) m[$1] = $2 } END { s=0; for (i in m) s += m[i]; printf "%d", s+0 }'
+}
+
+# 扫一遍所有进程，找出「进程内共享内存 + GPU 侧」最多的那个。
+# 只在真的有采集流时调用：这一步要读几百个 /proc 条目，平时不该拖慢脚本。
+scan_top() {
+	top_res=0; top_pid=""; top_name="?"; top_pss=0; top_gem=0
+	for d in /proc/[0-9]*; do
+		p=${d#/proc/}
+		[ -r "$d/smaps_rollup" ] || continue
+		pss=$(pss_shmem "$p")
+		gem=0
+		# 只有真的打开过 /dev/dri 的进程才可能持有 GPU 对象，先便宜地筛一遍
+		for f in "$d"/fd/*; do
+			case "$(readlink "$f" 2>/dev/null)" in
+				/dev/dri/*) gem=$(drm_sys_kib "$p"); break ;;
+			esac
+		done
+		res=$((pss + gem))
+		if [ "$res" -gt "$top_res" ]; then
+			top_res=$res; top_pid=$p; top_pss=$pss; top_gem=$gem
+			top_name=$(cat "$d/comm" 2>/dev/null)
+			[ -n "$top_name" ] || top_name="?"
+		fi
+	done
+}
+
 # ---------------------------------------------------------------------------
 head_ "【一】会话环境"
 
@@ -237,29 +284,85 @@ fi
 head_ "【五】内存与采集流"
 
 if [ -r /proc/meminfo ]; then
-	shmem=$(awk '/^Shmem:/{printf "%.2f", $2/1048576}' /proc/meminfo)
-	if [ -n "$shmem" ]; then
-		if awk "BEGIN{exit !($shmem > 4)}"; then
-			warn "Shmem ${shmem} GiB"
-			printf '       共享时超过 4 GiB 通常意味着帧生产快过消费：niri 宣告\n'
-			printf '       VideoFramerate 0/1 会被理解成不限速，软件编码器来不及\n'
-			printf '       消费，裸帧堆在共享内存里。niri 用户加 screencasting 块限帧率。\n'
-			printf '       注意限制值是每次开始共享时读的（niri-portal-cast -10 起）：改完
-'
-			printf '       config.kdl 重开一次共享就生效，不用重启 niri。真实协商值看
-'
-			printf '       journal 里的 framerate: spa_fraction，不看配置文件。\n'
-		else
-			ok "Shmem ${shmem} GiB"
-		fi
+	shmem_gib=$(awk '/^Shmem:/{printf "%.2f", $2/1048576}' /proc/meminfo)
+	if [ -n "$shmem_gib" ] && awk "BEGIN{exit !($shmem_gib > 4)}"; then
+		warn "Shmem ${shmem_gib} GiB（偏高）"
+		printf '       共享时偏高通常意味着帧生产快过客户端消费。niri 用户用\n'
+		printf '       screencasting 块限帧率/分辨率；限制值是每次开始共享时读的\n'
+		printf '       （niri-portal-cast -10 起），改完重开一次共享即生效。\n'
+	else
+		ok "Shmem ${shmem_gib} GiB"
 	fi
 fi
 
-if have wpctl; then
-	if wpctl status 2>/dev/null | grep -qiE 'screencast|record'; then
-		ok "有活动的采集流"
+# 有没有活动的采集流。结构化信息用 pw-dump；没有 jq 时退回 wpctl 的粗略判断。
+STREAM_LINE=""
+STREAM_FMT=""
+if have pw-dump && have jq; then
+	PWDUMP=$(pw-dump 2>/dev/null)
+	STREAM_LINE=$(printf '%s' "$PWDUMP" | jq -r '
+		[.[] | select(.info.props["media.class"] == "Stream/Output/Video")] | .[0] |
+		if . == null then "" else
+			[(.id | tostring),
+			 (.info.props["application.name"] // .info.props["application.process.binary"] // "?"),
+			 (.info.props["node.name"] // "?")] | @tsv
+		end' 2>/dev/null)
+	# 宽高 / 帧率只在真的读到时才打印；读不到宁可少一行，也不要猜
+	STREAM_FMT=$(printf '%s' "$PWDUMP" | jq -r '
+		[.[] | select(.info.props["media.class"] == "Stream/Output/Video")] | .[0] |
+		if . == null then "" else
+			((.info.params // []) | map(.Format // empty) | map(select(type == "object")) | .[0] // {}) as $f |
+			[($f.video.width // $f["video.width"] // .info.props["video.width"] // empty),
+			 ($f.video.height // $f["video.height"] // .info.props["video.height"] // empty),
+			 ($f.video.framerate // $f["video.framerate"] // .info.props["video.framerate"] // empty)]
+			| map(select(. != null and . != "")) | map(tostring) | join(" ")
+		end' 2>/dev/null)
+fi
+# pw-dump/jq 缺失、或 jq 存在但没给出结果时，退回 wpctl 的粗略判断（只知道有没有流）
+if [ -z "$STREAM_LINE" ] && have wpctl; then
+	wpctl status 2>/dev/null | grep -qiE 'screencast|record' && STREAM_LINE="?	?	?"
+fi
+
+if [ -n "$STREAM_LINE" ]; then
+	ok "有活动的采集流：id=$(printf '%s' "$STREAM_LINE" | cut -f1)  应用=$(printf '%s' "$STREAM_LINE" | cut -f2)  节点=$(printf '%s' "$STREAM_LINE" | cut -f3)${STREAM_FMT:+  格式=$STREAM_FMT}"
+
+	# 间隔 2 秒采两次，算共享内存的增长速率
+	s1=$(shmem_kib)
+	sleep 2
+	s2=$(shmem_kib)
+	rate=$(( (s2 - s1) / 2048 ))    # KiB / 2 秒 → MiB/s
+	[ "$rate" -lt 0 ] && rate=0
+
+	scan_top
+	if [ -n "$top_pid" ]; then
+		info "占用最多：$top_name (PID $top_pid)  进程内共享 $((top_pss / 1024)) MiB + GPU 侧 $((top_gem / 1024)) MiB"
+	fi
+
+	if [ "$rate" -gt 100 ]; then
+		bad "共享内存正以 ${rate} MB/s 增长，几十秒就会吃光内存"
+		printf '       先降档：niri-portal-cast-tune saver   （15fps + 960×600）\n'
+	elif [ "$rate" -ge 20 ]; then
+		warn "共享内存以 ${rate} MB/s 增长，几分钟后会被刹车掐断（不会冻机）"
+		printf '       降一档：niri-portal-cast-tune saver 或 fps 15\n'
 	else
-		info "当前没有采集流，共享时再跑一次"
+		ok "共享内存稳定（2 秒内约 ${rate} MB/s）"
+	fi
+	if [ "$rate" -ge 20 ]; then
+		printf '       判据：i915 的 GEM 是 shmem 记账的，但不进任何进程的 smaps，\n'
+		printf '       所以「进程 Pss_Shmem 很小、Shmem 却在涨」是正常的，\n'
+		printf '       别据此下「没人在占内存」的结论。\n'
+	fi
+else
+	info "当前没有采集流，共享时再跑一次（那时才能测增长速率与归属）"
+fi
+
+# 内存刹车：niri-portal-cast 带的 niri-shm-attrib，超阈值自动掐掉采集流
+if have pacman && pacman -Q niri-portal-cast >/dev/null 2>&1; then
+	if pgrep -f 'niri-shm-attrib' >/dev/null 2>&1; then
+		ok "内存刹车在运行（内存失控时自动掐流，不会冻机）"
+	else
+		warn "没有刹车在跑：共享内存失控时会一路吃光内存"
+		printf '       启用：systemctl --user enable --now niri-shm-attrib\n'
 	fi
 fi
 
@@ -356,6 +459,32 @@ else
 	elif [ "$angle_vk" -eq 1 ]; then
 		warn "QQ 带着 --use-angle=vulkan：接收视频的画面会缩成小图（内容靠左上、四周黑）"
 		printf '       解决：完全退出 QQ，用 QQ_WAYLAND_FIX_ANGLE=off linuxqq-wayland-fix 启动（实测 2026-10-03）\n'
+	fi
+
+	# 以为在用独显、其实在核显：启动脚本设了 PRIME 变量，但进程只打开了 i915。
+	# 实测 2026-10-03：__NV_PRIME_RENDER_OFFLOAD=1 对 Electron/ANGLE 常常无效，
+	# nvidia-smi 只用了 13 MiB，而进程里只有 /dev/dri/renderD128（i915）。
+	prime_set=0; has_nv=0; has_intel=0
+	for pid in $qqpids; do
+		tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null |
+			grep -qE '^(__NV_PRIME_RENDER_OFFLOAD|DRI_PRIME|__GLX_VENDOR_LIBRARY_NAME)=' && prime_set=1
+		for f in /proc/$pid/fd/*; do
+			case "$(readlink "$f" 2>/dev/null)" in
+				/dev/dri/*) : ;;
+				*) continue ;;
+			esac
+			case "$(awk '/^drm-driver:/{print $2; exit}' "/proc/$pid/fdinfo/$(basename "$f")" 2>/dev/null)" in
+				nvidia*) has_nv=1 ;;
+				i915|xe) has_intel=1 ;;
+			esac
+		done
+	done
+	if [ "$prime_set" -eq 1 ] && [ "$has_nv" -eq 1 ]; then
+		ok "独显环境变量已设置，进程也确实打开了 NVIDIA 设备"
+	elif [ "$prime_set" -eq 1 ] && [ "$has_intel" -eq 1 ]; then
+		warn "设了独显环境变量，但实际只打开了核显（i915）"
+		printf '       这些变量对 Electron/ANGLE 常常不生效。渲染在核显上意味着\n'
+		printf '       共享占用会记进系统内存（Shmem）而不是显存，等于没绕开。\n'
 	fi
 fi
 

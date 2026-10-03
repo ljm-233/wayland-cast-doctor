@@ -1,6 +1,6 @@
 pkgname=wayland-cast-doctor
 pkgver=2026.10.3
-pkgrel=8
+pkgrel=9
 pkgdesc="Diagnose why desktop sharing, screenshots or the clipboard fail on any Wayland compositor"
 arch=(any)
 url="https://github.com/ljm-233/wayland-cast-doctor"
