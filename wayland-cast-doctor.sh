@@ -338,6 +338,25 @@ else
 		fi
 	done
 	[ "$others" -gt 0 ] && ok "另外 $others 个 QQ 子进程：$others_ok 个四个库齐全（异常才逐条列出）"
+
+	# --use-angle=vulkan 会让**接收**视频的画面缩成小图（内容靠左上、四周黑）。
+	# 实测 2026-10-03：加 QQ_WAYLAND_FIX_ANGLE=off 启动即恢复正常。
+	main_qq=$(printf '%s\n' "$qqpids" | head -1)
+	angle_vk=0
+	for pid in $qqpids; do
+		case "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" in
+			*--use-angle=vulkan*) angle_vk=1 ;;
+		esac
+	done
+	angle_off=0
+	tr '\0' '\n' < "/proc/$main_qq/environ" 2>/dev/null |
+		grep -qx 'QQ_WAYLAND_FIX_ANGLE=off' && angle_off=1
+	if [ "$angle_vk" -eq 1 ] && [ "$angle_off" -eq 1 ]; then
+		ok "已关闭 ANGLE/Vulkan（--use-angle=vulkan 会让视频画面缩成小图）"
+	elif [ "$angle_vk" -eq 1 ]; then
+		warn "QQ 带着 --use-angle=vulkan：接收视频的画面会缩成小图（内容靠左上、四周黑）"
+		printf '       解决：完全退出 QQ，用 QQ_WAYLAND_FIX_ANGLE=off linuxqq-wayland-fix 启动（实测 2026-10-03）\n'
+	fi
 fi
 
 printf '\n'

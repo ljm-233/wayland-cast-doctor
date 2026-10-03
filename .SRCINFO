@@ -1,7 +1,7 @@
 pkgbase = wayland-cast-doctor
 	pkgdesc = Diagnose why desktop sharing, screenshots or the clipboard fail on any Wayland compositor
 	pkgver = 2026.10.3
-	pkgrel = 7
+	pkgrel = 8
 	url = https://github.com/ljm-233/wayland-cast-doctor
 	arch = any
 	license = GPL-3.0-or-later
