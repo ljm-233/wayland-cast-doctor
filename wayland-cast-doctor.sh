@@ -288,6 +288,83 @@ if have pgrep; then
 fi
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+head_ "【七】linuxqq-wayland-fix 注入检测"
+
+LIBS="libqq-wl-portal.so libqq-clipbridge.so libqq-screenshot.so libqq-borderfix.so"
+qqfix_ver=$(pacman -Q linuxqq-wayland-fix 2>/dev/null | awk '{print $2}')
+if [ -n "$qqfix_ver" ]; then
+	ok "已安装 linuxqq-wayland-fix $qqfix_ver"
+elif [ -d /usr/lib/linuxqq-wayland-fix ]; then
+	info "有 /usr/lib/linuxqq-wayland-fix，但 pacman 查不到包名（其它发行版的包？）"
+else
+	warn "没装 linuxqq-wayland-fix"
+	printf '       QQ 不会去走 portal 选源，共享/剪贴板/截图都退回它自己的老实现。\n'
+	printf '       装它：paru -S linuxqq-wayland-native-screenshare-fix-git\n'
+fi
+
+qqpids=$(pgrep -x qq 2>/dev/null)
+if [ -z "$qqpids" ]; then
+	info "QQ 没在运行（共享前请从「QQ（Wayland 修复版）」启动）"
+else
+	# 收帧的是 --type=ppapi 那个进程，它没被注入就等于没修
+	ppapi=""
+	for pid in $qqpids; do
+		case "$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" in
+			*--type=ppapi*) ppapi="$pid" ;;
+		esac
+	done
+
+	launcher=0
+	for pid in $qqpids; do
+		grep -qs 'linuxqq-wayland-fix' "/proc/$pid/cmdline" 2>/dev/null && launcher=1
+		grep -qs 'linuxqq-wayland-fix' "/proc/$pid/environ" 2>/dev/null && launcher=1
+	done
+	if [ "$launcher" -eq 1 ]; then
+		ok "QQ 是从修复版启动器起来的"
+	else
+		bad "QQ 不是从修复版启动器起来的（cmdline/environ 里都没有它）"
+		printf '       完全退出 QQ（含托盘）后，从「QQ（Wayland 修复版）」启动。\n'
+	fi
+
+	check_pid() {  # $1=pid $2=标签
+		local pid="$1" label="$2" got missing="" l n
+		got=$(grep -ohE 'libqq-[a-z-]+\.so' "/proc/$pid/maps" 2>/dev/null | sort -u)
+		n=$(printf '%s\n' "$got" | grep -c .)
+		for l in $LIBS; do
+			printf '%s\n' "$got" | grep -qx "$l" || missing="$missing $l"
+		done
+		if [ "$n" -eq 0 ]; then
+			bad "$label（PID $pid）没有任何注入库"
+			printf '       没注入的话它走的是 QQ 自己的老实现。\n'
+		elif [ -n "$missing" ]; then
+			warn "$label（PID $pid）只注入了 $n/4 个库"
+			printf '       缺：%s\n' "$missing"
+		else
+			ok "$label（PID $pid）四个库齐全"
+		fi
+	}
+
+	if [ -n "$ppapi" ]; then
+		check_pid "$ppapi" "收帧进程 ppapi"
+	else
+		warn "没找到 --type=ppapi 进程（还没开始过共享？）"
+	fi
+	others=0; others_ok=0
+	for pid in $qqpids; do
+		[ "$pid" = "$ppapi" ] && continue
+		grep -qs 'libqq-' "/proc/$pid/maps" 2>/dev/null || continue
+		others=$((others + 1))
+		n=$(grep -ohE 'libqq-[a-z-]+\.so' "/proc/$pid/maps" 2>/dev/null | sort -u | grep -c .)
+		if [ "$n" -eq 4 ]; then
+			others_ok=$((others_ok + 1))
+		else
+			check_pid "$pid" "QQ 子进程"
+		fi
+	done
+	[ "$others" -gt 0 ] && ok "另外 $others 个 QQ 子进程：$others_ok 个四个库齐全（异常才逐条列出）"
+fi
+
 printf '\n'
 if [ "$BLOCK" -eq 0 ]; then
 	printf '没有阻塞性问题。\n'
