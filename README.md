@@ -39,6 +39,7 @@ WirePlumber 换默认设备、PipeWire 重建整个图，客户端手里的句�
 | 四 · PipeWire 与音频图 | PipeWire 在不在，两种输出是否同时在线 |
 | 五 · 内存与采集流 | Shmem 占用，有没有活动采集流 |
 | 六 · 客户端侧 | QQ 有没有注入 `linuxqq-wayland-fix` |
+| 七 · 注入检测 | 逐进程查 `linuxqq-wayland-fix` 的四个库、收帧的 `--type=ppapi` 进程、以及是不是从修复版启动器起来的 |
 
 第三项是直接问合成器本人，不是查 `/usr/share/wayland-protocols` 目录。
 那个目录只证明协议定义装了，在任何装了 `wayland-protocols` 的机器上都成立，
