@@ -244,9 +244,11 @@ if [ -r /proc/meminfo ]; then
 			printf '       共享时超过 4 GiB 通常意味着帧生产快过消费：niri 宣告\n'
 			printf '       VideoFramerate 0/1 会被理解成不限速，软件编码器来不及\n'
 			printf '       消费，裸帧堆在共享内存里。niri 用户加 screencasting 块限帧率。\n'
-			printf '       注意帧率只在 niri 启动时读一次，改完 config.kdl 必须重启\n'
-			printf '       niri；`niri msg action load-config-file` 改不动它。真实的\n'
-			printf '       协商值看 journal 里的 framerate: spa_fraction，不看配置文件。\n'
+			printf '       注意限制值是每次开始共享时读的（niri-portal-cast -10 起）：改完
+'
+			printf '       config.kdl 重开一次共享就生效，不用重启 niri。真实协商值看
+'
+			printf '       journal 里的 framerate: spa_fraction，不看配置文件。\n'
 		else
 			ok "Shmem ${shmem} GiB"
 		fi
