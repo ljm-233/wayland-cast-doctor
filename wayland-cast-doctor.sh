@@ -262,42 +262,7 @@ if have wpctl; then
 fi
 
 # ---------------------------------------------------------------------------
-head_ "【六】客户端侧"
-
-# The other half of the problem. A correct compositor is useless if QQ never
-# asks it for anything, and that is what happens when QQ was not started from
-# the fixed launcher.
-if have pgrep; then
-	QQPID=$(pgrep -x qq 2>/dev/null | head -1)
-	if [ -n "$QQPID" ]; then
-		# Do not look for libqq-wl-portal.so specifically. It is LD_PRELOADed
-		# into QQ's main process but only dlopen()ed by the zygote child that
-		# actually talks to the portal, so it legitimately does not appear in
-		# the maps of whatever pgrep happens to return first. Any one of the
-		# four is proof enough that the launcher ran.
-		INJECTED=$(grep -oE 'libqq-(wl-portal|clipbridge|screenshot|borderfix)\.so' \
-			"/proc/$QQPID/maps" 2>/dev/null | sort -u | wc -l)
-
-		if [ "${INJECTED:-0}" -gt 0 ]; then
-			ok "QQ（PID $QQPID）已注入 linuxqq-wayland-fix（$INJECTED 个库）"
-			if [ "$INJECTED" -lt 4 ]; then
-				info "只找到 $INJECTED/4 个，其余可能在 zygote 子进程里"
-			fi
-		elif grep -qs 'linuxqq-wayland-fix' "/proc/$QQPID/cmdline" 2>/dev/null; then
-			ok "QQ（PID $QQPID）从修复版启动器启动"
-		else
-			warn "QQ（PID $QQPID）没有注入修复库"
-			printf '       没注入的话 QQ 只读写 X11 剪贴板，共享走自己的老实现。\n'
-			printf '       完全退出 QQ（含托盘）后从「QQ（Wayland修复版）」启动。\n'
-		fi
-	else
-		info "QQ 没在运行"
-	fi
-fi
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-head_ "【七】linuxqq-wayland-fix 注入检测"
+head_ "【六】客户端侧：linuxqq-wayland-fix 注入检测"
 
 LIBS="libqq-wl-portal.so libqq-clipbridge.so libqq-screenshot.so libqq-borderfix.so"
 qqfix_ver=$(pacman -Q linuxqq-wayland-fix 2>/dev/null | awk '{print $2}')
