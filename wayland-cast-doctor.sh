@@ -30,6 +30,32 @@ info() { printf '  %s提示%s  %s\n' "$B" "$B" "$1"; }
 warn() { printf '  %s注意%s  %s\n' "$Y" "$B" "$1"; }
 bad()  { printf '  %s故障%s  %s\n' "$R" "$B" "$1"; BLOCK=1; }
 
+# 在线音频输出计数：用 wpctl inspect 逐个判定，避免 wpctl status 的两个坑 ——
+#   ① Settings 里列的是 WirePlumber「记住的」默认设备，设备不在线也会出现；
+#   ② 在线 sink 在 wpctl status 里只显示描述文字，不是 node.name。
+# 输出：<有线数> <蓝牙数> <蓝牙档位>
+audio_outputs() {
+	_ao_wired=0; _ao_bt=0; _ao_prof=""
+	_ao_ids=$(wpctl status 2>/dev/null | grep -oE '^[^0-9]*[0-9]+\.' | grep -oE '[0-9]+')
+	for _ao_id in $_ao_ids; do
+		_ao_info=$(wpctl inspect "$_ao_id" 2>/dev/null) || continue
+		case "$_ao_info" in
+			*'media.class = "Audio/Sink"'*) ;;
+			*) continue ;;
+		esac
+		case "$_ao_info" in
+			*'node.name = "alsa_output.'*) _ao_wired=$((_ao_wired + 1)) ;;
+			*'node.name = "bluez_output.'*)
+				_ao_bt=$((_ao_bt + 1))
+				if [ -z "$_ao_prof" ]; then
+					_ao_prof=$(printf '%s\n' "$_ao_info" | grep 'api.bluez5.profile' | head -1 | sed 's/.*= *//; s/"//g')
+				fi
+				;;
+		esac
+	done
+	printf '%s %s %s\n' "$_ao_wired" "$_ao_bt" "$_ao_prof"
+}
+
 head_() { printf '\n%s\n' "$1"; }
 
 # ---- 下面几项检查共用的读取助手 -------------------------------------------
@@ -267,16 +293,30 @@ elif ! wpctl status 2>/dev/null | grep -q 'PipeWire'; then
 else
 	ok "PipeWire 在运行"
 
-	WIRED=$(wpctl status 2>/dev/null | grep -c 'analog-stereo\|analog-output')
-	BT=$(wpctl status 2>/dev/null | grep -c 'bluez_output')
+	ao=$(audio_outputs)
+	WIRED=$(printf '%s\n' "$ao" | awk '{print $1+0}')
+	BT=$(printf '%s\n' "$ao" | awk '{print $2+0}')
+	BT_PROF=$(printf '%s\n' "$ao" | awk '{print $3}')
 
-	if [ "${WIRED:-0}" -gt 0 ] && [ "${BT:-0}" -gt 0 ]; then
+	if [ "$WIRED" -gt 0 ] && [ "$BT" -gt 0 ]; then
 		warn "有线和蓝牙音频输出同时在线"
 		printf '       WirePlumber 会在两者之间换默认设备，PipeWire 重建整个图，\n'
 		printf '       客户端手里的句柄全部失效。表现是选择框弹出、点共享、然后\n'
 		printf '       崩掉或者 300 毫秒内退出。解法：只留一种输出。\n'
+	elif [ "$WIRED" -eq 0 ] && [ "$BT" -eq 0 ]; then
+		warn "没有任何在线音频输出"
+		printf '       接上输出设备再跑一次，这条判断才有意义。\n'
+	elif [ "$BT" -gt 0 ] && [ -n "$BT_PROF" ]; then
+		case "$BT_PROF" in
+			*headset*|*hfp*)
+				warn "蓝牙输出在通话档（$BT_PROF）"
+				printf '       通话/用麦会让蓝牙切档，PipeWire 一样会重建图：共享会突然\n'
+				printf '       无画面、通话可能挂不断。解法：通话时别用耳机麦，或只留 a2dp。\n' ;;
+			*)
+				ok "只有一种音频输出（有线=$WIRED 蓝牙=$BT 蓝牙档位=$BT_PROF）" ;;
+		esac
 	else
-		ok "只有一种音频输出（有线=${WIRED:-0} 蓝牙=${BT:-0}）"
+		ok "只有一种音频输出（有线=$WIRED 蓝牙=$BT）"
 	fi
 fi
 
